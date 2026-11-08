@@ -1,7 +1,7 @@
 import os
 from contextlib import asynccontextmanager
 from datetime import datetime
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
@@ -89,9 +89,21 @@ def assistant(payload: dict):
     return {"answer": "Thanks for your question. I can help with pricing, inspection duration, booking steps, and service areas. For property-specific advice, please send an enquiry so the inspector can review the details.", "mode": "guided-faq"}
 
 @app.get("/api/admin/enquiries")
-def list_enquiries(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
-    rows = db.query(Enquiry).order_by(Enquiry.created_at.desc()).limit(100).all()
-    return [{"id": x.id, "name": x.name, "email": x.email, "phone": x.phone, "property_address": x.property_address, "property_type": x.property_type, "approximate_size_sqft": x.approximate_size_sqft, "message": x.message, "preferred_dates": x.preferred_dates, "status": x.status, "created_at": x.created_at.isoformat()} for x in rows]
+def list_enquiries(
+    page: int = Query(default=1, ge=1),
+    status: str = Query(default="active", pattern="^(active|deleted|all)$"),
+    _: bool = Depends(require_admin),
+    db: Session = Depends(get_db),
+):
+    query = db.query(Enquiry)
+    if status == "deleted":
+        query = query.filter(Enquiry.status == "deleted")
+    elif status == "active":
+        query = query.filter(Enquiry.status != "deleted")
+    total = query.count()
+    rows = query.order_by(Enquiry.created_at.desc()).offset((page - 1) * 10).limit(10).all()
+    items = [{"id": x.id, "name": x.name, "email": x.email, "phone": x.phone, "property_address": x.property_address, "property_type": x.property_type, "approximate_size_sqft": x.approximate_size_sqft, "message": x.message, "preferred_dates": x.preferred_dates, "status": x.status, "created_at": x.created_at.isoformat()} for x in rows]
+    return {"items": items, "page": page, "per_page": 10, "total": total, "pages": (total + 9) // 10}
 
 @app.patch("/api/admin/enquiries/{enquiry_id}/status")
 def update_status(enquiry_id: int, payload: dict, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
