@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: professional-home-inspection
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: APP_ENV
+        value: demo
+      - key: TIMEZONE
+        value: America/Vancouver
+      - key: DATABASE_URL
+        sync: false
+      - key: ADMIN_API_KEY
+        sync: false
+      - key: ALLOW_PUBLIC_SUBMISSIONS
+        value: "false"
