@@ -21,7 +21,9 @@ def test_guided_faq_handles_unknown_question():
 
 def test_admin_routes_require_session(monkeypatch):
     from app.security import hash_password
+    from app.database import Base, engine
     from fastapi.testclient import TestClient
+    Base.metadata.create_all(bind=engine)
     monkeypatch.setenv("ADMIN_PASSWORD_HASH", hash_password("a strong admin password"))
     monkeypatch.setenv("ADMIN_SESSION_SECRET", "s" * 48)
     secure_client = TestClient(app, base_url="https://testserver")
