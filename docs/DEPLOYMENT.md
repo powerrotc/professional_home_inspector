@@ -17,10 +17,11 @@ The homepage and guided FAQ can be previewed in this demo. The enquiry form inte
 
 1. Create a separate Neon project on its Free plan; do not reuse the Personal AI Agent database.
 2. Copy the PostgreSQL connection string and set `DATABASE_URL` in the Render service's Environment settings.
-3. Set a long random `ADMIN_API_KEY` in Render.
-4. Redeploy, then verify `/api/health` reports `database_mode=postgresql`, `persistent_storage_configured=true`, and `admin_configured=true`.
-5. Open `/admin` and verify admin authentication works.
-6. Only then set `ALLOW_PUBLIC_SUBMISSIONS=true` and redeploy.
+3. Generate a password hash locally with `python -m app.security hash-password` (use a unique password of at least 12 characters). Put the resulting `scrypt$...` string in Render as `ADMIN_PASSWORD_HASH`. Do not put the raw password in Render or source control.
+4. Generate a separate random session secret (at least 32 characters) and set it as `ADMIN_SESSION_SECRET` in Render. Keep both values private.
+5. Redeploy, then verify `/api/health` reports `database_mode=postgresql`, `persistent_storage_configured=true`, and `admin_configured=true`.
+6. Open `/admin`, sign in, verify the session cookie is Secure, HttpOnly, and SameSite=Strict, and test sign-out.
+7. Only after all security and data-retention checks pass, consider setting `ALLOW_PUBLIC_SUBMISSIONS=true`. Keep it false until the owner explicitly approves accepting real enquiries.
 
 ## Free-tier limitations
 
