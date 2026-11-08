@@ -1,20 +1,25 @@
 import os
 from contextlib import asynccontextmanager
-from datetime import datetime
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from urllib.parse import urlsplit
+
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
+
 from .database import Base, engine, get_db, USING_SQLITE_FALLBACK
 from .models import Enquiry, BookingProposal
+from .security import create_session_token, verify_password, verify_session_token
+
+SESSION_COOKIE = "phi_admin_session"
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
 
-app = FastAPI(title="Professional Home Inspection API", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Professional Home Inspection API", version="0.2.0", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory="app/static/assets"), name="assets")
 
 class EnquiryIn(BaseModel):
@@ -32,12 +37,22 @@ class ProposalIn(BaseModel):
     option_2: str = Field(default="", max_length=80)
     option_3: str = Field(default="", max_length=80)
 
-def require_admin(authorization: str | None = Header(default=None)):
-    secret = os.getenv("ADMIN_API_KEY", "").strip()
-    if not secret:
-        raise HTTPException(status_code=503, detail="Admin access is not configured yet.")
-    if authorization != f"Bearer {secret}":
-        raise HTTPException(status_code=401, detail="Invalid admin credentials.")
+class LoginIn(BaseModel):
+    password: str = Field(min_length=1, max_length=256)
+
+def _check_same_origin(request: Request):
+    origin = request.headers.get("origin")
+    if not origin:
+        return
+    parsed = urlsplit(origin)
+    if parsed.scheme not in {"https", "http"} or parsed.netloc.lower() != request.headers.get("host", "").lower():
+        raise HTTPException(status_code=403, detail="Cross-origin request blocked.")
+
+def require_admin(request: Request):
+    secret = os.getenv("ADMIN_SESSION_SECRET", "")
+    token = request.cookies.get(SESSION_COOKIE, "")
+    if len(secret) < 32 or not token or not verify_session_token(token, secret):
+        raise HTTPException(status_code=401, detail="Please sign in to the admin dashboard.")
     return True
 
 @app.get("/")
@@ -50,20 +65,48 @@ def admin():
 
 @app.get("/api/health")
 def health():
+    admin_configured = bool(os.getenv("ADMIN_PASSWORD_HASH", "").strip()) and len(os.getenv("ADMIN_SESSION_SECRET", "")) >= 32
     return {
         "status": "ok",
         "service": "professional-home-inspection",
         "version": app.version,
         "database_mode": "sqlite-demo-only" if USING_SQLITE_FALLBACK else "postgresql",
         "persistent_storage_configured": not USING_SQLITE_FALLBACK,
-        "admin_configured": bool(os.getenv("ADMIN_API_KEY", "").strip()),
-        "submissions_enabled": os.getenv("ALLOW_PUBLIC_SUBMISSIONS", "false").lower() == "true" and not USING_SQLITE_FALLBACK,
+        "admin_configured": admin_configured,
+        "submissions_enabled": os.getenv("ALLOW_PUBLIC_SUBMISSIONS", "false").lower() == "true" and not USING_SQLITE_FALLBACK and admin_configured,
         "timezone": os.getenv("TIMEZONE", "America/Vancouver"),
     }
 
+@app.post("/api/admin/login")
+def admin_login(payload: LoginIn, request: Request, response: Response):
+    _check_same_origin(request)
+    password_hash = os.getenv("ADMIN_PASSWORD_HASH", "").strip()
+    secret = os.getenv("ADMIN_SESSION_SECRET", "")
+    if not password_hash or len(secret) < 32:
+        raise HTTPException(status_code=503, detail="Admin login is not configured.")
+    if not verify_password(payload.password, password_hash):
+        raise HTTPException(status_code=401, detail="Invalid password.")
+    response.set_cookie(
+        key=SESSION_COOKIE,
+        value=create_session_token(secret),
+        max_age=8 * 60 * 60,
+        httponly=True,
+        secure=True,
+        samesite="strict",
+        path="/api/admin",
+    )
+    return {"authenticated": True}
+
+@app.post("/api/admin/logout")
+def admin_logout(request: Request, response: Response):
+    _check_same_origin(request)
+    response.delete_cookie(key=SESSION_COOKIE, path="/api/admin", secure=True, httponly=True, samesite="strict")
+    return {"authenticated": False}
+
 @app.post("/api/enquiries")
 def create_enquiry(payload: EnquiryIn, db: Session = Depends(get_db)):
-    if USING_SQLITE_FALLBACK or os.getenv("ALLOW_PUBLIC_SUBMISSIONS", "false").lower() != "true":
+    admin_configured = bool(os.getenv("ADMIN_PASSWORD_HASH", "").strip()) and len(os.getenv("ADMIN_SESSION_SECRET", "")) >= 32
+    if USING_SQLITE_FALLBACK or not admin_configured or os.getenv("ALLOW_PUBLIC_SUBMISSIONS", "false").lower() != "true":
         raise HTTPException(status_code=503, detail="Online submissions are not enabled yet. Please contact the business directly.")
     item = Enquiry(**payload.model_dump())
     db.add(item)
@@ -106,7 +149,8 @@ def list_enquiries(
     return {"items": items, "page": page, "per_page": 10, "total": total, "pages": (total + 9) // 10}
 
 @app.patch("/api/admin/enquiries/{enquiry_id}/status")
-def update_status(enquiry_id: int, payload: dict, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+def update_status(enquiry_id: int, payload: dict, request: Request, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    _check_same_origin(request)
     status = str(payload.get("status", ""))
     if status not in {"new", "reviewing", "awaiting_customer", "approved", "declined", "deleted"}:
         raise HTTPException(status_code=400, detail="Unsupported status.")
@@ -118,7 +162,8 @@ def update_status(enquiry_id: int, payload: dict, _: bool = Depends(require_admi
     return {"id": item.id, "status": item.status}
 
 @app.post("/api/admin/enquiries/{enquiry_id}/proposals")
-def propose_times(enquiry_id: int, payload: ProposalIn, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+def propose_times(enquiry_id: int, payload: ProposalIn, request: Request, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    _check_same_origin(request)
     if not db.get(Enquiry, enquiry_id):
         raise HTTPException(status_code=404, detail="Enquiry not found.")
     item = BookingProposal(enquiry_id=enquiry_id, **payload.model_dump())
