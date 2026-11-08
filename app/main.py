@@ -1,4 +1,5 @@
 import os
+import time
 from contextlib import asynccontextmanager
 from urllib.parse import urlsplit
 
@@ -13,6 +14,7 @@ from .models import Enquiry, BookingProposal
 from .security import create_session_token, verify_password, verify_session_token
 
 SESSION_COOKIE = "phi_admin_session"
+_LOGIN_FAILURES: dict[str, list[float]] = {}
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -84,8 +86,16 @@ def admin_login(payload: LoginIn, request: Request, response: Response):
     secret = os.getenv("ADMIN_SESSION_SECRET", "")
     if not password_hash or len(secret) < 32:
         raise HTTPException(status_code=503, detail="Admin login is not configured.")
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    recent = [stamp for stamp in _LOGIN_FAILURES.get(client_ip, []) if now - stamp < 900]
+    _LOGIN_FAILURES[client_ip] = recent
+    if len(recent) >= 5:
+        raise HTTPException(status_code=429, detail="Too many sign-in attempts. Try again in 15 minutes.")
     if not verify_password(payload.password, password_hash):
+        _LOGIN_FAILURES[client_ip] = recent + [now]
         raise HTTPException(status_code=401, detail="Invalid password.")
+    _LOGIN_FAILURES.pop(client_ip, None)
     response.set_cookie(
         key=SESSION_COOKIE,
         value=create_session_token(secret),
