@@ -42,7 +42,7 @@ See [AGENTS.md](AGENTS.md) for mandatory instructions for human developers and A
 
 ## Current status
 
-This repository is being initialized. No production application or deployment is implied by the presence of these planning documents.
+The first application foundation is implemented on `main`: a public website, guided FAQ, enquiry API (disabled until persistent storage is configured), admin API/dashboard, tests, and Render Free Blueprint. The first Render demo deployment is still pending; no live server URL exists yet. See [deployment instructions](docs/DEPLOYMENT.md).
 
 ## Owner approvals
 
