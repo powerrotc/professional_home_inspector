@@ -13,6 +13,22 @@ The repository now contains a Render Blueprint at `render.yaml`. It creates one 
 
 The homepage and guided FAQ can be previewed in this demo. The enquiry form intentionally refuses submissions. Do not enter real customer information in demo mode.
 
+## Database schema migrations
+
+The project now includes Alembic with a non-destructive baseline migration.
+
+- For a new database, run `alembic upgrade head` with `DATABASE_URL` pointing to that database before deploying code that depends on schema changes.
+- For a database created by the earlier application's `Base.metadata.create_all()`, the baseline checks that the expected tables and columns already exist and adds the enquiry lookup index only if it is missing. It does not drop tables, rewrite rows, or change customer data.
+- If an existing table is missing an expected column, the migration stops with an error instead of guessing how to repair data.
+- The baseline migration is intentionally non-reversible. Do not run `alembic downgrade` against it.
+- The current demo startup still calls SQLAlchemy `create_all()` for compatibility. Treat Alembic—not `create_all()`—as the versioned schema-change record for future development.
+- Never run migrations against the production Neon database until the owner explicitly approves that production operation. Test migrations against a disposable SQLite database first.
+
+Example local command (use a disposable database):
+```bash
+DATABASE_URL=sqlite:///./migration-test.db alembic upgrade head
+```
+
 ## Before accepting real enquiries
 
 1. Create a separate Neon project on its Free plan; do not reuse the Personal AI Agent database.
@@ -27,11 +43,10 @@ The homepage and guided FAQ can be previewed in this demo. The enquiry form inte
 
 Render Free web services are intended for preview/hobby use, not production. They spin down after 15 minutes without inbound traffic, the next request can take about a minute to wake, and the local filesystem is ephemeral. Never rely on local SQLite for customer records.
 
-Neon Free currently has finite compute, storage, and network allowances. Review its current dashboard usage and limits. If a quota is reached, do not upgrade or enable billing; pause and find a free alternative.
+Neon Free has finite compute, storage, and network allowances. Review its current dashboard usage and limits. If a quota is reached, do not upgrade or enable billing; pause and find a free alternative.
 
 ## Current status
 
-- Code and CI are merged to `main`.
+- Application code and CI are maintained in GitHub; a merged PR does not prove that a Render deployment is live.
 - Render Blueprint is ready.
-- No Render service has been created from this chat session, so there is no live URL to share yet.
-- The Render account connection is not available to the current ChatGPT tools; a one-time owner sign-in and Blueprint application is required to create the service. Once the service exists, its URL can be used for verification.
+- The Render account connection is not available to the current ChatGPT tools; a one-time owner sign-in and Blueprint application is required to create or verify the service.
