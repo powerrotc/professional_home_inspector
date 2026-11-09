@@ -1,16 +1,17 @@
 import os
 import time
 from contextlib import asynccontextmanager
+from decimal import Decimal, ROUND_HALF_UP
 from urllib.parse import urlsplit
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request, Response
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, condecimal
 from sqlalchemy.orm import Session
 
 from .database import Base, engine, get_db, USING_SQLITE_FALLBACK
-from .models import Enquiry, BookingProposal
+from .models import Enquiry, BookingProposal, QuoteSettings, QuoteDraft
 from .security import create_session_token, verify_password, verify_session_token
 
 SESSION_COOKIE = "phi_admin_session"
@@ -21,7 +22,7 @@ async def lifespan(app: FastAPI):
     Base.metadata.create_all(bind=engine)
     yield
 
-app = FastAPI(title="Professional Home Inspection API", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="Professional Home Inspection API", version="0.3.0", lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory="app/static/assets"), name="assets")
 
 class EnquiryIn(BaseModel):
@@ -41,6 +42,11 @@ class ProposalIn(BaseModel):
 
 class LoginIn(BaseModel):
     password: str = Field(min_length=1, max_length=256)
+
+class QuoteSettingsIn(BaseModel):
+    base_fee: condecimal(ge=0, le=100000) 
+    per_sqft_rate: condecimal(ge=0, le=100)
+    minimum_fee: condecimal(ge=0, le=100000)
 
 def _check_same_origin(request: Request):
     origin = request.headers.get("origin")
@@ -186,3 +192,91 @@ def propose_times(enquiry_id: int, payload: ProposalIn, request: Request, _: boo
 def list_bookings(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
     rows = db.query(BookingProposal).order_by(BookingProposal.created_at.desc()).limit(100).all()
     return [{"id": x.id, "enquiry_id": x.enquiry_id, "options": [v for v in [x.option_1, x.option_2, x.option_3] if v], "status": x.status, "created_at": x.created_at.isoformat()} for x in rows]
+
+def _quote_settings_payload(item: QuoteSettings | None):
+    if item is None:
+        return {"configured": False, "currency": "CAD", "base_fee": None, "per_sqft_rate": None, "minimum_fee": None}
+    return {
+        "configured": True,
+        "currency": "CAD",
+        "base_fee": str(item.base_fee),
+        "per_sqft_rate": str(item.per_sqft_rate),
+        "minimum_fee": str(item.minimum_fee),
+    }
+
+@app.get("/api/admin/quote-settings")
+def get_quote_settings(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    return _quote_settings_payload(db.get(QuoteSettings, 1))
+
+@app.put("/api/admin/quote-settings")
+def update_quote_settings(payload: QuoteSettingsIn, request: Request, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    _check_same_origin(request)
+    base = Decimal(payload.base_fee).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    rate = Decimal(payload.per_sqft_rate).quantize(Decimal("0.0001"), rounding=ROUND_HALF_UP)
+    minimum = Decimal(payload.minimum_fee).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    if base == 0 and rate == 0 and minimum == 0:
+        raise HTTPException(status_code=422, detail="At least one pricing amount must be greater than zero.")
+    item = db.get(QuoteSettings, 1)
+    if item is None:
+        item = QuoteSettings(id=1, base_fee=base, per_sqft_rate=rate, minimum_fee=minimum)
+        db.add(item)
+    else:
+        item.base_fee, item.per_sqft_rate, item.minimum_fee = base, rate, minimum
+    db.commit()
+    return _quote_settings_payload(item)
+
+@app.post("/api/admin/enquiries/{enquiry_id}/quote")
+def create_quote_draft(enquiry_id: int, request: Request, _: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    _check_same_origin(request)
+    enquiry = db.get(Enquiry, enquiry_id)
+    if enquiry is None:
+        raise HTTPException(status_code=404, detail="Enquiry not found.")
+    if enquiry.approximate_size_sqft <= 0:
+        raise HTTPException(status_code=422, detail="A valid property size is required before calculating a quote.")
+    settings = db.get(QuoteSettings, 1)
+    if settings is None:
+        raise HTTPException(status_code=409, detail="Quote pricing is not configured. Set the business pricing rules first.")
+    base = Decimal(settings.base_fee)
+    rate = Decimal(settings.per_sqft_rate)
+    minimum = Decimal(settings.minimum_fee)
+    raw = base + (rate * Decimal(enquiry.approximate_size_sqft))
+    subtotal = max(minimum, raw).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    draft = QuoteDraft(
+        enquiry_id=enquiry.id,
+        property_type=enquiry.property_type,
+        size_sqft=enquiry.approximate_size_sqft,
+        base_fee=base,
+        per_sqft_rate=rate,
+        minimum_fee=minimum,
+        subtotal=subtotal,
+        currency="CAD",
+        status="draft",
+    )
+    db.add(draft)
+    db.commit()
+    db.refresh(draft)
+    return {
+        "id": draft.id,
+        "enquiry_id": draft.enquiry_id,
+        "property_type": draft.property_type,
+        "size_sqft": draft.size_sqft,
+        "base_fee": str(draft.base_fee),
+        "per_sqft_rate": str(draft.per_sqft_rate),
+        "minimum_fee": str(draft.minimum_fee),
+        "subtotal": str(draft.subtotal),
+        "currency": draft.currency,
+        "status": draft.status,
+        "note": draft.note,
+        "created_at": draft.created_at.isoformat(),
+    }
+
+@app.get("/api/admin/quotes")
+def list_quote_drafts(_: bool = Depends(require_admin), db: Session = Depends(get_db)):
+    rows = db.query(QuoteDraft).order_by(QuoteDraft.created_at.desc()).limit(100).all()
+    return [{
+        "id": x.id, "enquiry_id": x.enquiry_id, "property_type": x.property_type,
+        "size_sqft": x.size_sqft, "base_fee": str(x.base_fee),
+        "per_sqft_rate": str(x.per_sqft_rate), "minimum_fee": str(x.minimum_fee),
+        "subtotal": str(x.subtotal), "currency": x.currency, "status": x.status,
+        "note": x.note, "created_at": x.created_at.isoformat()
+    } for x in rows]

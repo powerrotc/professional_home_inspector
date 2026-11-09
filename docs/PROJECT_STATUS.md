@@ -7,13 +7,14 @@ Last updated: 2026-11-09
 - Hosting target: Render Free; database target: separate Neon Free project named Home Inspector.
 - Default timezone: `America/Vancouver`.
 - Synthetic test data only. Do not import legacy prototype data.
-- PR #4 (secure administrator login) and PR #5 (admin enquiry and booking workflows) are merged to `main`.
+- PR #4 (secure administrator login), #5 (admin enquiry and booking workflows), #6 (homepage hero image/design), and #7 (Alembic baseline migration) are merged to `main`.
+- PR #7 establishes a non-destructive baseline; do not run production migrations until separately approved.
 - Production Render environment variables have not been changed through this development workflow.
 - Public submissions must remain disabled until persistent PostgreSQL, secure admin login, and owner-approved readiness checks are complete.
 
 ## Implemented
-- Responsive public website and guided FAQ (not generative AI).
-- Public homepage with a responsive hero image and clear inspection enquiry calls to action (PR #6 pending review).
+- Responsive public website with a high-impact home-inspector hero image and clear enquiry calls to action.
+- Guided FAQ (not generative AI).
 - Enquiry API with validation; public submissions disabled by default.
 - Admin password verification using salted scrypt hashes.
 - Signed eight-hour admin sessions in Secure, HttpOnly, SameSite=Strict cookies.
@@ -21,6 +22,15 @@ Last updated: 2026-11-09
 - Admin enquiry listing with active/deleted/all filters and 10-item pagination.
 - Up to three appointment proposal records; saving a proposal does not send customer communication.
 - Render Free Blueprint and deployment guide.
+- Alembic migration history with a non-destructive baseline for existing and fresh databases.
+- Administrator-configurable quote rules (CAD base fee, per-square-foot rate, minimum fee).
+- Quote drafts use max(minimum fee, base fee + property size × rate), are stored for review, and are never sent automatically.
+
+## Quote calculation limitations
+- No business prices are prefilled or invented; the administrator must enter approved amounts.
+- The quote is a preliminary subtotal only. Taxes, travel, special property conditions, and additional adjustments are excluded and require manual review.
+- Property type is recorded for context but does not alter the formula until the owner supplies approved adjustment rules.
+- The formula is not customer-facing and does not represent a final offer.
 
 ## Known limitations
 - Admin dashboard requires `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` on Render.
@@ -28,15 +38,15 @@ Last updated: 2026-11-09
 - Admin login rate limiting is process-local and may reset when a free service sleeps/restarts or when multiple workers are used; add platform-level protection before production.
 - Enquiry status can restore an item from the deleted view. Permanent deletion and a retention policy are not implemented.
 - Appointment proposals are stored as draft records only; there is no customer email, customer acceptance flow, or Calendar sync.
-- Quote calculation, generative AI, Gmail, Google Calendar, and BC Assessment lookup are not implemented.
+- Generative AI, Gmail, Google Calendar, and BC Assessment lookup are not implemented.
 - Do not use real customer records or send external messages in testing.
 
 ## Next tasks
-1. Add safe, versioned database migrations before future schema changes; do not run destructive migrations.
-2. Add configurable quote rules as draft calculations subject to administrator review; do not invent business prices.
-3. Add provider-neutral AI Q&A only after confirming a usable free allowance and implementing hard usage caps.
+1. Add tests for quote rules, quote calculation, and migration upgrade paths; confirm CI.
+2. Review deployment sync and health checks only with owner-approved production operations.
+3. Evaluate provider-neutral AI Q&A only after confirming a usable free allowance and implementing hard usage caps.
 4. Evaluate Gmail and Google Calendar only after free-quota review and explicit production authorization.
-5. Complete Render configuration and health checks only with owner-approved production changes.
+5. Define retention policy before permanent deletion is implemented.
 
 ## Deployment safety
 - Render service: `https://professional-home-inspection.onrender.com/`
