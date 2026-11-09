@@ -1,52 +1,49 @@
-# Project status and handoff
+# Project Status and Agent Handoff
 
 Last updated: 2026-11-08
 
-## Current milestone
+## Current baseline
+- Repository: `powerrotc/professional_home_inspector`
+- Hosting target: Render Free; database target: separate Neon Free project named Home Inspector.
+- Default timezone: `America/Vancouver`.
+- Synthetic test data only. Do not import legacy prototype data.
+- PR #4 (secure administrator login) merged to `main` as `55ccaba7a0adc59e9cc58f0215fbed9be3db4ba5`.
+- Production Render environment variables were not changed.
+- Public submissions must remain disabled until persistent PostgreSQL, secure admin login, and owner-approved readiness checks are complete.
 
-First application foundation is being prepared for a demo deployment. Work is on `feature/application-foundation`; `main` remains protected by the owner review workflow.
+## Implemented
+- Responsive public website and guided FAQ (not generative AI).
+- Enquiry API with validation; public submissions disabled by default.
+- Admin password verification using salted scrypt hashes.
+- Signed eight-hour admin sessions in Secure, HttpOnly, SameSite=Strict cookies.
+- Same-origin checks on state-changing admin routes.
+- Admin enquiry listing with active/deleted/all filters and 10-item pagination.
+- Up to three appointment proposal records; saving a proposal does not send customer communication.
+- Render Free Blueprint and deployment guide.
 
-## Implemented in this milestone
+## In progress
+- PR #4 merge completed. A post-merge workflow run was not returned by the current GitHub workflow lookup; do not report post-merge CI as verified.
+- PR #5 (admin enquiry workflow UI) adds status management, restore-by-status-change, appointment proposal entry, and proposal listing. CI and review pending.
 
-- FastAPI web application serving a responsive public website.
-- Service overview and customer enquiry form UI.
-- Guided FAQ assistant for common questions (not yet a generative AI model).
-- Enquiry API with server-side validation.
-- Admin API protected by an environment API key.
-- Admin enquiry list with 10 records per page and active/deleted/all filters.
-- Up to three proposed appointment time fields per enquiry.
-- Health endpoint reporting whether persistent PostgreSQL storage and admin configuration are present.
-- Render Blueprint for a free Python web service.
-- Automated smoke tests and GitHub Actions CI.
+## Known limitations
+- Admin dashboard requires `ADMIN_PASSWORD_HASH` and `ADMIN_SESSION_SECRET` on Render.
+- `DATABASE_URL` must point to the separate Home Inspector Neon project; SQLite is demo-only and Render local storage is ephemeral.
+- Admin login rate limiting is process-local and may reset when a free service sleeps/restarts or when multiple workers are used; add platform-level protection before production.
+- Enquiry status can restore an item from the deleted view. Permanent deletion and a retention policy are not implemented.
+- Appointment proposals are stored as draft records only; there is no customer email, customer acceptance flow, or Calendar sync.
+- Quote calculation, generative AI, Gmail, Google Calendar, and BC Assessment lookup are not implemented.
+- Do not use real customer records or send external messages in testing.
 
-## Deliberately not enabled yet
+## Next tasks
+1. Verify PR #5 CI and inspect its complete diff.
+2. Add safe, versioned database migrations before future schema changes; do not run destructive migrations.
+3. Add configurable quote rules as draft calculations subject to administrator review; do not invent business prices.
+4. Add provider-neutral AI Q&A only after confirming a usable free allowance and implementing hard usage caps.
+5. Evaluate Gmail and Google Calendar only after free-quota review and explicit production authorization.
+6. Complete Render configuration and health checks only with owner-approved production changes.
 
-- Public enquiry submissions remain disabled unless a persistent PostgreSQL database is configured and `ALLOW_PUBLIC_SUBMISSIONS=true`.
-- SQLite fallback is for local/demo smoke tests only; Render disk storage is ephemeral on the free web service.
-- No real customer data should be entered during the demo deployment.
-- No live Gemini/LLM provider, Gmail, or Google Calendar credentials have been configured for this separate application.
-- No business contact details, final pricing table, insurance/licensing claims, or service-area boundaries have been supplied; do not invent them.
-- BC Assessment lookup remains postponed.
-
-## Deployment requirements
-
-1. Create a separate free Neon PostgreSQL database for this project; do not reuse the Personal AI Agent database.
-2. Set `DATABASE_URL` to the Neon connection string in Render.
-3. Set a long random `ADMIN_API_KEY` in Render.
-4. Set `ALLOW_PUBLIC_SUBMISSIONS=true` only after the database connection and admin access have been verified.
-5. Keep all Render services on the Free plan. Do not add a paid persistent disk or paid service.
-
-## Known limitations / next tasks
-
-- Verify Render free-tier service and sleep behavior at deployment time.
-- Connect the repository to Render using the included `render.yaml` Blueprint.
-- Verify deployment health and public page rendering.
-- Configure Neon PostgreSQL and verify persistence across service restarts.
-- Add secure admin login/session handling (current admin API key is a temporary owner-only bootstrap mechanism).
-- Add proposal review and customer acceptance flow, calendar sync, email notifications, and an audited quote workflow.
-- Add a provider-neutral AI adapter and a free-tier provider only after verifying current terms and adding strict usage caps.
-- Add retention-aware deleted-enquiry pagination and restore/permanent-delete policy before enabling destructive deletion.
-
-## Verification
-
-Automated tests are defined in `tests/test_app.py` and run via GitHub Actions. A successful CI run is required before merge. A successful GitHub merge alone does not prove a Render deployment is live.
+## Deployment safety
+- Render service: `https://professional-home-inspection.onrender.com/`
+- Keep `ALLOW_PUBLIC_SUBMISSIONS=false`.
+- Never expose passwords, hashes, session secrets, database URLs, OAuth credentials, or customer details.
+- No paid services, plans, add-ons, credits, or billing.
