@@ -73,6 +73,7 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.drop_index("ix_quote_drafts_enquiry_id", table_name="quote_drafts")
-    op.drop_table("quote_drafts")
-    op.drop_table("quote_settings")
+    raise RuntimeError(
+        "Quote settings and draft calculations may contain business records; "
+        "this migration is intentionally non-reversible. Use a reviewed forward migration instead."
+    )
